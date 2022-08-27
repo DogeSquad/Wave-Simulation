@@ -1,8 +1,7 @@
 #version 330 core
 layout (location = 0) in vec3 aPos;   // the position variable has attribute position 0
 
-smooth out float height;
-smooth out vec2 coordinates;
+smooth out vec3 fragPos;
 smooth out vec3 normal;
 
 uniform sampler1D waveParamsTex;
@@ -15,6 +14,8 @@ uniform vec3 sunDir;
 uniform vec2 tileSize;
 
 uniform float time;
+
+uniform float wavecrestSharpness;
 
 uniform float g;
 
@@ -35,8 +36,9 @@ vec3 wavePointPosition(float alpha, float beta)
         //float omega = sqrt(g * k * tanh(k * meanDepth)); // For shallow water
         float delta = params.z * alpha + params.w * beta - omega * time - params.y;
 
-        position.x += (params.z / k) * (params.x  /* / tanh(k * meanDepth) */) * sin(delta);
-        position.z += (params.w / k) * (params.x /* / tanh(k * meanDepth) */) * sin(delta);
+        float sinDelta = pow(0.5f * sin(delta) + 0.5f, wavecrestSharpness);
+        position.x += (params.z / k) * (params.x  /* / tanh(k * meanDepth) */) * sinDelta;
+        position.z += (params.w / k) * (params.x  /* / tanh(k * meanDepth) */) * sinDelta;
         position.y += params.x * cos(delta);
     }
     return vec3(alpha - position.x, position.y, beta - position.z);
@@ -51,6 +53,5 @@ void main()
 
     normal = normalize(cross(deltaAlpha, deltaBeta));
     gl_Position = proj_mat * view_mat * model_mat * vec4(wavePoint, 1.0f);
-    height = wavePoint.y;
-    coordinates = wavePoint.xz;
+    fragPos = wavePoint.xyz;
 }   

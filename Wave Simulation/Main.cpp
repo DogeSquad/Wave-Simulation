@@ -22,7 +22,7 @@
 
 static unsigned int WINDOW_WIDTH  = 1920;
 static unsigned int WINDOW_HEIGHT = 1080;
-static float FOV = 45.0f;
+static float FOV = 50.0f;
 static float NEAR_CLIP = 0.1f;
 static float FAR_CLIP = 400.0f;
 
@@ -50,7 +50,7 @@ void setupWater(unsigned int* waterVAO, unsigned int* waterVBO, unsigned int* wa
 void setupBowl(unsigned int* bowlVAO, unsigned int* bowlVBO, unsigned int* bowlEBO, float xMin, float zMin, float xMax, float zMax, int res);
 void setupFullscreenQuad(unsigned int* screenVAO, unsigned int* screenVBO, unsigned int* screenEBO);
 
-glm::vec4 wavePointPosition(float alpha, float beta, float gravity, float time, float waveParams[][4], float waveOctaves,
+glm::vec4 wavePointPosition(float alpha, float beta, float gravity, float time, float waveParams[][4], float waveOctaves, float wavecrestSharpness,
                             glm::vec4* tangent, glm::vec4* bitangent, glm::vec4* normal);
 void load2DTexture(unsigned int* texture, const char* texturePath);
 
@@ -111,7 +111,9 @@ int main()
 
     float waterColor[] = { 0.0f, 0.435f, 0.62f };
 
+    float heightScale = 1.0f;
     float gravity = 9.8f;
+    float wavecrestSharpness = 12.0f;
     const unsigned int waveOctaves = 6;
     float waveParams[waveOctaves][4] =
     {
@@ -136,7 +138,6 @@ int main()
     unsigned int waterShaderProgram;
     compileShader(&waterShaderProgram, (RESOURCES_PATH + "shaders/waterShader.vert").c_str(),
                                        (RESOURCES_PATH + "shaders/waterShader.frag").c_str());
-    setShaderUniformMat4(waterShaderProgram, "model_mat", glm::identity<glm::mat4>());
     setShaderUniformMat4(waterShaderProgram, "proj_mat", proj_mat);
     setShaderUniformFloat(waterShaderProgram, "fogRadius", fogRadius);
     setShaderUniformFloat(waterShaderProgram, "fogDensity", fogDensity);
@@ -147,14 +148,16 @@ int main()
 
     setShaderUniformInt(waterShaderProgram, "backgroundTexture", 0);
     setShaderUniformInt(waterShaderProgram, "waveParamsTex", 1);
+
+    glm::mat4 water_model_mat = glm::identity<glm::mat4>();
     // -------------------
 
     // Setup bowl
-    int bowlRes  =     200;
-    xMin         = -300.0f;
-    zMin         = -300.0f;
-    xMax         =  300.0f;
-    zMax         =  300.0f;
+    int bowlRes  =     400;
+    xMin         = -400.0f;
+    zMin         = -400.0f;
+    xMax         =  400.0f;
+    zMax         =  400.0f;
 
     unsigned int bowlVAO, bowlVBO, bowlEBO;
     setupBowl(&bowlVAO, &bowlVBO, &bowlEBO, xMin, zMin, xMax, zMax, bowlRes);
@@ -251,9 +254,9 @@ int main()
         glEnable(GL_DEPTH);
 
         //// Render cube
-        cube_model_mat[3] = wavePointPosition(cubePosition.x, cubePosition.z, gravity, currentFrame, waveParams, waveOctaves, // NULL, NULL, NULL);
+        cube_model_mat[3] = wavePointPosition(cubePosition.x, cubePosition.z, gravity, currentFrame, waveParams, waveOctaves, wavecrestSharpness,// NULL, NULL, NULL);
                                               &cube_model_mat[2], &cube_model_mat[0], &cube_model_mat[1]);
-
+        cube_model_mat[3][1] *= heightScale;
         glUseProgram(cubeShaderProgram);
         setShaderUniformMat4(cubeShaderProgram, "model_mat", cube_model_mat);
         setShaderUniformMat4(cubeShaderProgram, "view_mat", camera.getViewMatrix());
@@ -276,12 +279,16 @@ int main()
 
         // Render water
         glUseProgram(waterShaderProgram);
+        water_model_mat[1][1] = heightScale;
+        setShaderUniformMat4(waterShaderProgram, "model_mat", water_model_mat);
         setShaderUniformMat4(waterShaderProgram, "view_mat", camera.getViewMatrix());
         setShaderUniformFloat(waterShaderProgram, "time", currentFrame);
         setShaderUniformFloat(waterShaderProgram, "fogRadius", fogRadius);
         setShaderUniformFloat(waterShaderProgram, "fogDensity", fogDensity);
         setShaderUniformFloat(waterShaderProgram, "g", gravity);
+        setShaderUniformFloat(waterShaderProgram, "wavecrestSharpness", wavecrestSharpness);
         setShaderUniformVec3(waterShaderProgram, "waterColor", waterColor);
+        setShaderUniformVec3(waterShaderProgram, "camPos", camera.getCameraPos());
 
         // Set water Shader parameters
         glActiveTexture(GL_TEXTURE1);
@@ -315,7 +322,9 @@ int main()
             ImGui::NewFrame();
             ImGui::Begin("Water Options");
             ImGui::SetWindowSize(ImVec2(400, ImGui::GetWindowHeight()));
-            ImGui::SliderFloat("Gravity", &gravity, -2.0f, 10.0f);
+            ImGui::SliderFloat("Height Scale", &heightScale, 0.0f, 10.0f);
+            ImGui::SliderFloat("Gravity", &gravity, 0.0f, 10.0f);
+            ImGui::SliderFloat("Wave Crest Sharpness", &wavecrestSharpness, -2.0f, 100.0f);
             ImGui::ColorEdit3("Water Color", &waterColor[0]);
             for (int i = 0; i < waveOctaves; i++)
             {
@@ -342,7 +351,7 @@ int main()
     glfwTerminate();
     return 0;
 }
-glm::vec4 wavePointPosition(float alpha, float beta, float gravity, float time, float waveParams[][4], float waveOctaves, 
+glm::vec4 wavePointPosition(float alpha, float beta, float gravity, float time, float waveParams[][4], float waveOctaves, float wavecrestSharpness,
                             glm::vec4* tangent, glm::vec4* bitangent, glm::vec4* normal)
 {
     glm::vec3 position(0.0f);
@@ -353,18 +362,19 @@ glm::vec4 wavePointPosition(float alpha, float beta, float gravity, float time, 
         //float omega = sqrt(g * k * tanh(k * meanDepth)); // For shallow water
         float delta = waveParams[i][2] * alpha + waveParams[i][3] * beta - omega * time - waveParams[i][1];
 
-        position.x += (waveParams[i][2] / k) * (waveParams[i][0] /* / tanh(k * meanDepth) */) * sin(delta);
-        position.z += (waveParams[i][3] / k) * (waveParams[i][0] /* / tanh(k * meanDepth) */) * sin(delta);
+        float sinDelta = pow(0.5f * sin(delta) + 0.5f, wavecrestSharpness);
+        position.x += (waveParams[i][2] / k) * (waveParams[i][0] /* / tanh(k * meanDepth) */) * sinDelta;
+        position.z += (waveParams[i][3] / k) * (waveParams[i][0] /* / tanh(k * meanDepth) */) * sinDelta;
         position.y += waveParams[i][0] * cos(delta);
     }
     position = glm::vec3(alpha - position.x, position.y, beta - position.z);
     if (normal != NULL && tangent != NULL && bitangent != NULL)
     {
         float eps = 0.0001f;
-        glm::vec3 deltaAlpha = glm::vec3(wavePointPosition(alpha + eps, beta, gravity, time, waveParams, waveOctaves, NULL, NULL, NULL)) - position;
+        glm::vec3 deltaAlpha = glm::vec3(wavePointPosition(alpha + eps, beta, gravity, time, waveParams, waveOctaves, wavecrestSharpness, NULL, NULL, NULL)) - position;
         *tangent = glm::vec4(glm::normalize(deltaAlpha), 0.0f);
 
-        glm::vec3 deltaBeta = glm::vec3(wavePointPosition(alpha, beta + eps, gravity, time, waveParams, waveOctaves, NULL, NULL, NULL)) - position;
+        glm::vec3 deltaBeta = glm::vec3(wavePointPosition(alpha, beta + eps, gravity, time, waveParams, waveOctaves, wavecrestSharpness, NULL, NULL, NULL)) - position;
         *bitangent = glm::vec4(glm::normalize(deltaBeta), 0.0f);
 
         *normal = glm::vec4(glm::normalize(glm::cross(glm::vec3(*tangent), glm::vec3(*bitangent))), 0.0f);
